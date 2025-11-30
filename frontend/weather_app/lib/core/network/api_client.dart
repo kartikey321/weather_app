@@ -25,14 +25,14 @@ class ApiClient {
     _dio.interceptors.addAll([
       _authInterceptor(),
       _errorInterceptor(),
-      PrettyDioLogger(
-        requestHeader: true,
-        requestBody: true,
-        responseHeader: true,
-        responseBody: true,
-        error: true,
-        compact: true,
-      ),
+      // PrettyDioLogger(
+      //   requestHeader: true,
+      //   requestBody: true,
+      //   responseHeader: true,
+      //   responseBody: true,
+      //   error: true,
+      //   compact: true,
+      // ),
     ]);
   }
 

@@ -1,4 +1,5 @@
 import 'package:weather_app/core/errors/exceptions.dart';
+import 'package:weather_app/core/constants/api_constants.dart';
 import 'package:weather_app/core/network/api_client.dart';
 import 'package:weather_app/features/weather/data/models/weather_request_dto.dart';
 import 'package:weather_app/features/weather/data/models/weather_response_dto.dart';
@@ -26,7 +27,7 @@ class WeatherRemoteDataSourceImpl implements WeatherRemoteDataSource {
   ) async {
     try {
       final response = await apiClient.dio.get(
-        '/weather/forecast',
+        ApiConstants.weatherForecast,
         queryParameters: request.toQueryParams(),
       );
 
@@ -43,7 +44,9 @@ class WeatherRemoteDataSourceImpl implements WeatherRemoteDataSource {
           e is RateLimitException) {
         rethrow;
       }
-      throw ServerException('Failed to fetch weather forecast: ${e.toString()}');
+      throw ServerException(
+        'Failed to fetch weather forecast: ${e.toString()}',
+      );
     }
   }
 
@@ -53,7 +56,7 @@ class WeatherRemoteDataSourceImpl implements WeatherRemoteDataSource {
   ) async {
     try {
       final response = await apiClient.dio.get(
-        '/weather/historical',
+        ApiConstants.weatherHistorical,
         queryParameters: request.toQueryParams(),
       );
 
@@ -71,7 +74,8 @@ class WeatherRemoteDataSourceImpl implements WeatherRemoteDataSource {
         rethrow;
       }
       throw ServerException(
-          'Failed to fetch historical weather: ${e.toString()}');
+        'Failed to fetch historical weather: ${e.toString()}',
+      );
     }
   }
 }

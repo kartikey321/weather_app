@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:html' as html show window;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -16,11 +17,13 @@ import 'package:weather_app/features/weather/presentation/bloc/weather_bloc.dart
 import 'package:weather_app/features/weather/presentation/bloc/weather_event.dart';
 import 'package:weather_app/features/weather/presentation/bloc/weather_state.dart';
 import 'package:weather_app/features/weather/presentation/widgets/daily_forecast_card.dart';
-import 'package:weather_app/features/weather/presentation/widgets/parallax_background.dart';
+import 'package:weather_app/features/weather/presentation/widgets/multi_layer_parallax.dart';
+import 'package:weather_app/features/weather/presentation/widgets/parallax_layer_builder.dart';
 import 'package:weather_app/features/weather/presentation/widgets/temperature_display.dart';
-import 'package:weather_app/features/weather/presentation/widgets/weather_animation_helper.dart';
 import 'package:weather_app/features/weather/presentation/widgets/weather_info_card.dart';
 import 'package:weather_app/features/weather/presentation/widgets/video_background.dart';
+import 'package:weather_app/features/weather/presentation/widgets/animated_weather_card.dart';
+import 'package:weather_app/features/weather/presentation/widgets/city_search_dialog.dart';
 import 'package:weather_app/injection_container.dart';
 
 /// Weather screen
@@ -55,6 +58,9 @@ class _WeatherScreenState extends State<WeatherScreen> {
   late final DeepLinkTracker _deepLinkTracker;
   StreamSubscription<WeatherQuery>? _deepLinkSubscription;
   final LocationService _fallbackLocationService = sl<LocationService>();
+  StreamSubscription? _urlChangeSubscription;
+  StreamSubscription? _hashChangeSubscription;
+  bool _isUpdatingUrl = false;
 
   @override
   void initState() {
@@ -74,6 +80,17 @@ class _WeatherScreenState extends State<WeatherScreen> {
     );
     _deepLinkActive = widget.fromDeepLink;
 
+    // Listen for browser URL changes (web only)
+    if (kIsWeb) {
+      _urlChangeSubscription = html.window.onPopState.listen((_) {
+        _handleBrowserUrlChange();
+      });
+      // Also listen for hash changes
+      _hashChangeSubscription = html.window.onHashChange.listen((_) {
+        _handleBrowserUrlChange();
+      });
+    }
+
     _loadWeather();
   }
 
@@ -81,6 +98,8 @@ class _WeatherScreenState extends State<WeatherScreen> {
   void dispose() {
     _scrollController.dispose();
     _deepLinkSubscription?.cancel();
+    _urlChangeSubscription?.cancel();
+    _hashChangeSubscription?.cancel();
     super.dispose();
   }
 
@@ -108,39 +127,53 @@ class _WeatherScreenState extends State<WeatherScreen> {
     );
   }
 
+  void _handleBrowserUrlChange() {
+    if (!kIsWeb || !mounted || _isUpdatingUrl) return;
+
+    // Parse the current URL
+    final uri = Uri.parse(html.window.location.href);
+
+    // Extract query parameters from the hash fragment
+    Map<String, String> params = {};
+    if (uri.fragment.isNotEmpty) {
+      // Fragment looks like: "/?city=Chennai" or "/?lat=12.34&lon=56.78"
+      final fragmentUri = Uri.parse(uri.fragment.startsWith('/')
+          ? uri.fragment.substring(1)
+          : uri.fragment);
+      params = fragmentUri.queryParameters;
+    }
+
+    // Determine what query to use
+    WeatherQuery? newQuery;
+
+    if (params.containsKey('city') && params['city']!.isNotEmpty) {
+      // City-based query
+      newQuery = WeatherQuery(city: params['city']);
+    } else if (params.containsKey('lat') && params.containsKey('lon')) {
+      // Coordinate-based query
+      final lat = double.tryParse(params['lat']!);
+      final lon = double.tryParse(params['lon']!);
+      if (lat != null && lon != null) {
+        newQuery = WeatherQuery(latitude: lat, longitude: lon);
+      }
+    }
+
+    // Update if the query changed
+    if (newQuery != null && newQuery != _query) {
+      setState(() {
+        _query = newQuery!;
+      });
+      _loadWeather(forceRefresh: true);
+    }
+  }
+
   Future<void> _openCitySearch() async {
-    final controller = TextEditingController(text: _query.city ?? '');
     final result = await showDialog<String>(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          title: const Text('Search by City'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            textInputAction: TextInputAction.search,
-            decoration: const InputDecoration(
-              labelText: 'City Name',
-              hintText: 'e.g. Berlin',
-            ),
-            onSubmitted: (value) => Navigator.of(context).pop(value),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(controller.text.trim()),
-              child: const Text('Search'),
-            ),
-          ],
-        );
+        return CitySearchDialog(initialValue: _query.city);
       },
     );
-
-    controller.dispose();
 
     if (result != null) {
       final trimmed = result.trim();
@@ -198,8 +231,15 @@ class _WeatherScreenState extends State<WeatherScreen> {
     }
 
     if (kIsWeb) {
+      // Build a clean URI for hash routing on web
       final base = Uri.base;
-      return base.replace(queryParameters: params);
+      return Uri(
+        scheme: base.scheme,
+        host: base.host,
+        port: base.port,
+        path: '/',
+        fragment: '/?${Uri(queryParameters: params).query}',
+      );
     }
 
     return Uri(
@@ -252,11 +292,29 @@ class _WeatherScreenState extends State<WeatherScreen> {
       params['lon'] = _query.longitude!.toStringAsFixed(4);
     }
 
-    final updated = Uri.base.replace(
-      queryParameters: params.isEmpty ? null : params,
-    );
+    // Build the new hash fragment
+    final newHash = params.isEmpty
+        ? '#/'
+        : '#/?${Uri(queryParameters: params).query}';
 
-    SystemNavigator.routeInformationUpdated(uri: updated);
+    // Get current location without hash
+    final baseUri = Uri.parse(html.window.location.href);
+    final baseUrl = '${baseUri.scheme}://${baseUri.host}${baseUri.hasPort ? ':${baseUri.port}' : ''}/';
+
+    // Construct the complete new URL
+    final newUrl = baseUrl + newHash;
+
+    // Set flag to prevent triggering our own URL change listener
+    _isUpdatingUrl = true;
+
+    // Use browser history API to update URL without triggering navigation
+    // This is more reliable than SystemNavigator for hash routing
+    html.window.history.replaceState(null, '', newUrl);
+
+    // Reset flag after a brief delay
+    Future.delayed(const Duration(milliseconds: 100), () {
+      _isUpdatingUrl = false;
+    });
   }
 
   String _formatLocationTitle(Location location) {
@@ -350,32 +408,72 @@ class _WeatherScreenState extends State<WeatherScreen> {
             _notifyDeepLinkResult(true);
             final condition = current.condition;
 
-            // Get weather-based gradient and animation
-            final isDaytime = WeatherAnimationHelper.isDaytime();
-            final gradientColors = WeatherAnimationHelper.getGradientColors(
-              condition.code,
-              isDaytime,
+            // Get weather-based data
+            final isDaytime = current.isDay;
+
+            // Build weather-specific parallax layers
+            final parallaxLayers = ParallaxLayerBuilder.buildWeatherLayers(
+              weatherCode: condition.code,
+              isDaytime: isDaytime,
             );
-            final weatherAnimation =
-                WeatherAnimationHelper.getAnimationForWeatherCode(
-                  condition.code,
-                );
 
             return Stack(
               children: [
-                // Weather animations in background
-                if (weatherAnimation != null)
-                  Positioned.fill(child: weatherAnimation),
+                // Video background (with parallax)
+                AnimatedBuilder(
+                  animation: _scrollController,
+                  builder: (context, _) {
+                    final offset = _scrollController.hasClients
+                        ? _scrollController.offset
+                        : 0.0;
+                    final parallaxOffset = offset * 0.2;
 
-                // Main content with parallax
-                ParallaxBackground(
+                    return Positioned.fill(
+                      top: -parallaxOffset,
+                      child: VideoBackground(
+                        weatherCode: condition.code,
+                        isDaytime: isDaytime,
+                      ),
+                    );
+                  },
+                ),
+
+                // Subtle gradient overlay for text readability (lighter than before)
+                AnimatedBuilder(
+                  animation: _scrollController,
+                  builder: (context, _) {
+                    final offset = _scrollController.hasClients
+                        ? _scrollController.offset
+                        : 0.0;
+                    final parallaxOffset = offset * 0.25;
+
+                    return Positioned.fill(
+                      top: -parallaxOffset,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.black.withOpacity(0.1),
+                              Colors.black.withOpacity(0.3),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+
+                // Multi-layer parallax with weather elements (clouds, sun, stars, rain, etc.)
+                MultiLayerParallax(
                   scrollController: _scrollController,
-                  gradientColors: gradientColors,
-                  backgroundWidget: VideoBackground(
-                    weatherCode: condition.code,
-                    isDaytime: isDaytime,
-                  ),
-                  child: RefreshIndicator(
+                  layers: parallaxLayers,
+                  child: Container(), // Empty container, layers render in Stack
+                ),
+
+                // Main content
+                RefreshIndicator(
                     onRefresh: () async => _refreshWeather(),
                     child: CustomScrollView(
                       controller: _scrollController,
@@ -421,6 +519,9 @@ class _WeatherScreenState extends State<WeatherScreen> {
                             title: Text(
                               _formatLocationTitle(forecast.location),
                               style: const TextStyle(
+                                fontSize: 20, // Fixed size for collapsed state
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
                                 shadows: [
                                   Shadow(
                                     offset: Offset(1, 1),
@@ -430,6 +531,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
                                 ],
                               ),
                             ),
+                            expandedTitleScale: 2.0, // Scale up when expanded
                             background: Container(color: Colors.transparent),
                           ),
                         ),
@@ -472,39 +574,57 @@ class _WeatherScreenState extends State<WeatherScreen> {
                                         context,
                                       ),
                                   children: [
-                                    WeatherInfoCard(
-                                      icon: Icons.thermostat,
-                                      label: 'Feels Like',
-                                      value:
-                                          '${current.apparentTemperature.round()}°C',
+                                    AnimatedWeatherCard(
+                                      index: 0,
+                                      child: WeatherInfoCard(
+                                        icon: Icons.thermostat,
+                                        label: 'Feels Like',
+                                        value:
+                                            '${current.apparentTemperature.round()}°C',
+                                      ),
                                     ),
-                                    WeatherInfoCard(
-                                      icon: Icons.water_drop,
-                                      label: 'Humidity',
-                                      value: '${current.relativeHumidity}%',
+                                    AnimatedWeatherCard(
+                                      index: 1,
+                                      child: WeatherInfoCard(
+                                        icon: Icons.water_drop,
+                                        label: 'Humidity',
+                                        value: '${current.relativeHumidity}%',
+                                      ),
                                     ),
-                                    WeatherInfoCard(
-                                      icon: Icons.air,
-                                      label: 'Wind Speed',
-                                      value:
-                                          '${current.windSpeed.toStringAsFixed(1)} km/h',
+                                    AnimatedWeatherCard(
+                                      index: 2,
+                                      child: WeatherInfoCard(
+                                        icon: Icons.air,
+                                        label: 'Wind Speed',
+                                        value:
+                                            '${current.windSpeed.toStringAsFixed(1)} km/h',
+                                      ),
                                     ),
-                                    WeatherInfoCard(
-                                      icon: Icons.speed,
-                                      label: 'Pressure',
-                                      value:
-                                          '${current.pressureMsl.round()} hPa',
+                                    AnimatedWeatherCard(
+                                      index: 3,
+                                      child: WeatherInfoCard(
+                                        icon: Icons.speed,
+                                        label: 'Pressure',
+                                        value:
+                                            '${current.pressureMsl.round()} hPa',
+                                      ),
                                     ),
-                                    WeatherInfoCard(
-                                      icon: Icons.cloud,
-                                      label: 'Cloud Cover',
-                                      value: '${current.cloudCover}%',
+                                    AnimatedWeatherCard(
+                                      index: 4,
+                                      child: WeatherInfoCard(
+                                        icon: Icons.cloud,
+                                        label: 'Cloud Cover',
+                                        value: '${current.cloudCover}%',
+                                      ),
                                     ),
-                                    WeatherInfoCard(
-                                      icon: Icons.opacity,
-                                      label: 'Precipitation',
-                                      value:
-                                          '${current.precipitation.toStringAsFixed(1)} mm',
+                                    AnimatedWeatherCard(
+                                      index: 5,
+                                      child: WeatherInfoCard(
+                                        icon: Icons.opacity,
+                                        label: 'Precipitation',
+                                        value:
+                                            '${current.precipitation.toStringAsFixed(1)} mm',
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -520,12 +640,20 @@ class _WeatherScreenState extends State<WeatherScreen> {
                                     ).textTheme.headlineMedium,
                                   ),
                                   const SizedBox(height: 16),
-                                  ...forecast.daily!.map(
-                                    (daily) => Padding(
+                                  ...forecast.daily!.asMap().entries.map(
+                                    (entry) => Padding(
                                       padding: const EdgeInsets.only(
                                         bottom: 8.0,
                                       ),
-                                      child: DailyForecastCard(daily: daily),
+                                      child: AnimatedWeatherCard(
+                                        index:
+                                            6 +
+                                            entry
+                                                .key, // Offset index for staggering after grid
+                                        child: DailyForecastCard(
+                                          daily: entry.value,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -536,7 +664,6 @@ class _WeatherScreenState extends State<WeatherScreen> {
                       ],
                     ),
                   ),
-                ),
               ],
             );
           } else if (state is WeatherError) {

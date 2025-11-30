@@ -90,10 +90,4 @@ class WeatherAnimationHelper {
         ? [const Color(0xFF7F8C99), const Color(0xFF52616B)]
         : [const Color(0xFF2C3E50), const Color(0xFF34495E)];
   }
-
-  /// Determine if it's daytime based on current hour
-  static bool isDaytime() {
-    final hour = DateTime.now().hour;
-    return hour >= 6 && hour < 18;
-  }
 }
