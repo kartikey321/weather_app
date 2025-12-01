@@ -11,6 +11,7 @@ A full-stack weather experience powered by a Cloudflare Workers backend and a Fl
 - [API Highlights](#api-highlights)
 - [Deep Linking & City Search Flow](#deep-linking--city-search-flow)
 - [Testing](#testing)
+- [UI Screenshots](#ui-screenshots)
 
 ## Architecture Overview
 - **Backend**: Cloudflare Workers (Hono.js) + D1 (SQLite) + Workers KV for caching. The worker exposes REST endpoints for authentication, user profile, and weather retrieval backed by the Open-Meteo APIs. Weather responses are cached and rate-limited by tier.
@@ -86,3 +87,8 @@ Base path: `/api/v1`
 - Address deprecated Flutter APIs (`withOpacity`, `desiredAccuracy`).
 - Expand automated widget/integration tests for location + deep-link scenarios.
 
+## UI Screenshots
+
+| Splash & Manual Entry | Weather Overview | Detailed Forecast |
+| --- | --- | --- |
+| ![Splash](frontend/weather_app/screenshots/image.png) | ![Weather Overview](frontend/weather_app/screenshots/image1.png) | ![Detailed Forecast](frontend/weather_app/screenshots/image2.png) |
