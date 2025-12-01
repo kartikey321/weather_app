@@ -35,6 +35,15 @@ A full-stack weather experience powered by a Cloudflare Workers backend and a Fl
 - Deep link handling on Android/iOS (intent filters/URL schemes) and web (query-based) without route jumps.
 - Dependency injection via `get_it`, network via Dio, secure storage, Hive caching hooks (ready for expansion).
 
+## Architectural Decisions & Trade-offs
+- **Cloudflare Workers + Hono**: chosen for low-latency global edge execution, built-in KV/D1 support, and small-footprint TypeScript routing. Trade-off: platform-specific tooling (Wrangler) and limited Node APIs.
+- **KV-backed caching + hash contract**: frontend generates SHA256 hashes (sorted parameter strings) so identical weather queries hit KV caches. Provides deterministic caching but requires clients to keep hashing logic in sync with backend validations.
+- **Rate limiting in KV**: per-IP/user counters expire every 60 s; simple and distributed but approximate (no sliding window precision).
+- **Flutter + BLoC + `get_it`**: predictable event/state flow and testability. Alternative (Provider, Riverpod) skipped to keep dependencies minimal. BLoC boilerplate is heavier but isolates domain logic from widgets.
+- **Deep linking without navigation**: instead of pushing new routes, a shared `DeepLinkTracker` updates the active `WeatherQuery`, allowing the splash screen to wait before acquiring GPS. Trade-off: requires extra coordination state but avoids flashing the wrong city.
+- **Manual location fallback**: when a deep link fails, the client reverts to the device location rather than terminating—prioritizes user experience over strict error reporting.
+- **Project structure**: backend follows MVC-like layout (`controllers/`, `services/`, `routes/`), while frontend follows clean architecture (data/domain/presentation). This separation adds files but keeps responsibilities focused.
+
 ## Project Structure
 ```
 weather_app/
